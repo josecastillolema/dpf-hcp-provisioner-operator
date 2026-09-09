@@ -27,7 +27,7 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/go-logr/logr"
 	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/name"
+	cranename "github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	configv1 "github.com/openshift/api/config/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -355,7 +355,7 @@ func (m *DPUServiceTemplateManager) isMultiArchReleaseImage(ctx context.Context,
 	if strings.HasSuffix(image, "-multi") {
 		return true
 	}
-	ref, err := name.ParseReference(image)
+	ref, err := cranename.ParseReference(image)
 	if err != nil {
 		return false
 	}
