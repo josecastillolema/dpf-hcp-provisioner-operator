@@ -27,6 +27,8 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/go-logr/logr"
 	"github.com/google/go-containerregistry/pkg/authn"
+	cranename "github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	configv1 "github.com/openshift/api/config/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -346,9 +348,22 @@ func (m *DPUServiceTemplateManager) getOCPVersionFromClusterVersion(ctx context.
 	return cv.Status.Desired.Version, cv.Status.Desired.Image, nil
 }
 
-// ponytail: tag-based check only; digest-based multiarch refs fall back to aarch64 resolution
-func isMultiArchReleaseImage(image string) bool {
-	return strings.HasSuffix(image, "-multi")
+// isMultiArchReleaseImage queries the registry to check whether the release
+// image is a manifest list (multi-arch) or a single-arch image. Uses HEAD
+// (no image download) so the check is lightweight.
+func (m *DPUServiceTemplateManager) isMultiArchReleaseImage(ctx context.Context, image string, keychain authn.Keychain) bool {
+	if strings.HasSuffix(image, "-multi") {
+		return true
+	}
+	ref, err := cranename.ParseReference(image)
+	if err != nil {
+		return false
+	}
+	desc, err := remote.Head(ref, remote.WithAuthFromKeychain(keychain), remote.WithContext(ctx))
+	if err != nil {
+		return false
+	}
+	return desc.MediaType.IsIndex()
 }
 
 // resolveARM64OVNImage extracts the aarch64 ovn-kubernetes image from the release payload.
@@ -426,14 +441,14 @@ func (m *DPUServiceTemplateManager) ensureOVNTemplate(ctx context.Context, names
 		return fmt.Errorf("determining OCP version: %w", err)
 	}
 
+	keychain, err := m.getClusterPullSecretKeychain(ctx)
+	if err != nil {
+		return fmt.Errorf("getting cluster pull secret: %w", err)
+	}
+
 	var ovnkTemplateInfo ovnTemplateInfo
 	if CNOOVNKDaemonSetImageChanged {
-
-		// TODO(NVIDIA-906): This will never work as the .status.desired.image
-		// field is always a digest. We must do something more intelligent,
-		// possible reading OCI labels off of the release image itself. Leaving
-		// this as broken for now and will fix it in a follow-up commit.
-		if isMultiArchReleaseImage(releaseImage) {
+		if m.isMultiArchReleaseImage(ctx, releaseImage, keychain) {
 			log.Info("Multi-arch release image detected, using management cluster OVN image directly", "image", currentOVNKImage)
 			repo, tag, err := splitImage(currentOVNKImage)
 			if err != nil {
